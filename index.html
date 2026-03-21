@@ -32,6 +32,7 @@
       <button class="btn" id="worldV">Planeta Violeta</button>
       <button class="btn" id="worldE">Tierra</button>
       <button class="btn" id="worldN">Neón Nexus</button>
+      <button class="btn" id="bagBtn">🎒 Mochila</button>
     </div>
     <div class="row">
       <span class="badge" id="world">Mundo: —</span>
@@ -43,11 +44,11 @@
     <div class="help">
       <div><kbd>WASD</kbd> mover • clic izq: disparar • mouse: apuntar</div>
       <div><kbd>E</kbd> teletransportar cuadrante aleatorio • bordes duros 8×8</div>
-      <div><kbd>P</kbd> pausa / reanudar • Teclas <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> para cambiar de mundo</div>
+      <div><kbd>P</kbd> pausa / reanudar • Teclas <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> para cambiar de mundo • <kbd>I</kbd> o botón para mochila</div>
       <div>Si el <b>Boss</b> te toca, perdés una vida. Tenés <b>3</b> ❤️.</div>
     </div>
   </div>
-  <div class="credits">v1.0 — Fix de arranque, corazones grandes y separados, GAME OVER + botón reinicio</div>
+  <div class="credits">v1.1 — Corazones recolocados, restart total, mochila 2×4 con botón</div>
   <button id="restartBtn">Reiniciar Juego</button>
 
 <script>
@@ -85,11 +86,13 @@
     neon:{id:'neon',label:'Neón Nexus',palette:'neon'}
   };
 
-  const state={
+  const INITIAL_STATE = {
     world:'violeta', qx:0, qy:7,
     paused:false, arrows:[], lastTime:performance.now(),
-    gameOver:false
+    gameOver:false,
+    showBag:false
   };
+  const state = {...INITIAL_STATE};
 
   function quadName(qx=state.qx,qy=state.qy){
     const file=String.fromCharCode(65+clamp(qx,0,7));
@@ -106,6 +109,7 @@
   const worldVBtn=document.getElementById('worldV');
   const worldEBtn=document.getElementById('worldE');
   const worldNBtn=document.getElementById('worldN');
+  const bagBtn=document.getElementById('bagBtn');
   const restartBtn=document.getElementById('restartBtn');
 
   const keys=new Set();
@@ -117,6 +121,7 @@
     if(k==='1') selectWorld('violeta');
     if(k==='2') selectWorld('tierra');
     if(k==='3') selectWorld('neon');
+    if(k==='i'&&!e.repeat) { state.showBag=!state.showBag; }
   });
   window.addEventListener('keyup',e=>{keys.delete(e.key.toLowerCase());});
   canvas.addEventListener('pointermove',e=>{
@@ -131,9 +136,8 @@
   worldVBtn.addEventListener('click',()=>selectWorld('violeta'));
   worldEBtn.addEventListener('click',()=>selectWorld('tierra'));
   worldNBtn.addEventListener('click',()=>selectWorld('neon'));
-  restartBtn.addEventListener('click',()=>{
-    resetPlayer();
-  });
+  bagBtn.addEventListener('click',()=>{ state.showBag=!state.showBag; });
+  restartBtn.addEventListener('click',()=>{ resetGame(); });
 
   function updateBadges(){
     worldEl.textContent=`Mundo: ${WORLDS[state.world].label}`;
@@ -155,10 +159,25 @@
     hpMax:3, hp:3, inv:0
   };
 
+  // Mochila (2 filas x 4 cols)
+  const bag = new Array(8).fill(null); // slots vacíos (futuro)
+
   function resetPlayer(){
     player.hp=player.hpMax; player.inv=0; state.gameOver=false; state.paused=false;
     player.pos.x=QUAD_SIZE.w/2; player.pos.y=QUAD_SIZE.h/2;
+  }
+
+  function resetGame(){
+    // Reinicia todo "desde cero" (no en el punto de muerte)
+    Object.assign(state, {...INITIAL_STATE, lastTime:performance.now()});
+    resetPlayer();
+    // Respawnea bosses y limpia proyectiles
+    bosses.violeta=spawnBossFor('violeta');
+    bosses.tierra =spawnBossFor('tierra');
+    bosses.neon   =spawnBossFor('neon');
+    state.arrows.length=0;
     restartBtn.style.display='none';
+    updateBadges();
   }
 
   function shoot(){
@@ -265,13 +284,17 @@
     ctx.textAlign='right';  for(let gy=0;gy<rows;gy++){ const cy=y0+gy*cell+cell/2+4*DPR; ctx.fillText(String(8-gy), x0-6*DPR, cy); }
     ctx.fillStyle='#cfe0ff'; ctx.font=`${Math.floor(11*DPR)}px system-ui,Segoe UI,Roboto`; ctx.textAlign='right'; ctx.fillText(quadName(), x0+w+4*DPR, y0+h+18*DPR);
     ctx.restore();
+  }
 
-    // Corazones (vidas) — más grandes y alejados del minimapa
-    drawHearts(x0 - 28*DPR, y0 + 8*DPR);
+  function drawHeartsFixed(){
+    // Corazones más arriba y más a la izquierda (respecto al minimapa)
+    const marginTop = 10*DPR;
+    const rightOffset = 220*DPR; // los alejamos hacia la izquierda
+    drawHearts(canvas.width - rightOffset, marginTop);
   }
 
   function drawHearts(xRight, yTop){
-    const n=player.hpMax; const size=24*DPR; const gap=12*DPR; // doble tamaño y más separación
+    const n=player.hpMax; const size=24*DPR; const gap=12*DPR; // tamaño OK
     for(let i=0;i<n;i++){
       const filled=i<player.hp; const x=xRight - (n-i-1)*(size+gap);
       heartIcon(x, yTop, size, filled ? '#ff5d73' : 'rgba(255,255,255,0.25)');
@@ -284,6 +307,38 @@
     ctx.bezierCurveTo(s,s*0.75, s*0.5,s, s*0.5,s);
     ctx.bezierCurveTo(s*0.5,s, 0,s*0.75, 0,s*0.35);
     ctx.closePath(); ctx.fill(); ctx.restore(); }
+
+  function renderBag(){
+    if(!state.showBag) return;
+    const cols=4, rows=2, slot=38*DPR, gap=10*DPR; // 2×4 slots
+    const pad=16*DPR;
+    const totalW = cols*slot + (cols-1)*gap + pad*2;
+    const totalH = rows*slot + (rows-1)*gap + pad*2 + 18*DPR;
+    const x = canvas.width - totalW - 14*DPR; // abajo derecha
+    const y = canvas.height - totalH - 14*DPR;
+
+    // Marco
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(x,y,totalW,totalH);
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=2*DPR; ctx.strokeRect(x,y,totalW,totalH);
+    ctx.fillStyle='#cfe0ff'; ctx.font=`${Math.floor(12*DPR)}px system-ui,Segoe UI,Roboto`;
+    ctx.fillText('Mochila', x+pad, y+14*DPR);
+
+    // Slots
+    let idx=0; const sx0=x+pad, sy0=y+pad+18*DPR;
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const sx = sx0 + c*(slot+gap);
+        const sy = sy0 + r*(slot+gap);
+        ctx.fillStyle='rgba(17,24,38,0.9)'; ctx.fillRect(sx,sy,slot,slot);
+        ctx.strokeStyle='rgba(124,146,200,0.6)'; ctx.strokeRect(sx,sy,slot,slot);
+        // placeholder de ítem
+        const it = bag[idx++];
+        if(it){ /* futuro: dibujar ícono */ }
+      }
+    }
+    ctx.restore();
+  }
 
   function render(paused=false){
     const decor=getDecor(state.world,state.qx,state.qy); const tint=decor.tint;
@@ -340,8 +395,14 @@
 
     ctx.restore();
 
-    // Minimap + Corazones
+    // Minimap (arriba derecha)
     drawMinimap();
+
+    // Corazones fijos (arriba derecha pero más a la izquierda del mapa)
+    drawHeartsFixed();
+
+    // Mochila (abajo derecha)
+    renderBag();
 
     // Overlays
     if(state.paused && !state.gameOver){ ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#e6eef8'; ctx.font=`${Math.floor(24*DPR)}px system-ui,Segoe UI,Roboto`; ctx.textAlign='center'; ctx.fillText('Pausado', canvas.width/2, canvas.height/2); }
@@ -393,7 +454,7 @@
     testsEl.textContent=`Tests: ${pass}/${cases.length}`;
   }
 
-  selectWorld('violeta');
+  // Inicio
   runTests();
   updateBadges();
   requestAnimationFrame(step);
